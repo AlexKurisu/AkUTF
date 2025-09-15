@@ -119,6 +119,11 @@ uint32_t u8_decode_once(u8_decoder_ctx ctx, const char *src) {
 }
 
 uint32_t *u8_decode(const char *src, _Bool replace) {
+    if (!src) {
+        errno = EINVAL;
+        return NULL;
+    }
+
     ptrdiff_t dest_len = strlen(src) + 1;
     uint32_t *dest = calloc(dest_len, sizeof(*dest));
     if (!dest)
@@ -156,7 +161,8 @@ char *u8_encode(const uint32_t *src) {
     if (!src)
         return NULL;
 
-    /* Calculate maximum possible length (each codepoint can be up to 4 bytes) */
+    /* Calculate maximum possible length (each codepoint can be up to 4 bytes)
+     */
     size_t src_len = 0;
     while (src[src_len] != 0)
         src_len++;
