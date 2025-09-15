@@ -1,5 +1,6 @@
 .POSIX:
 .PHONY: all clean test benchmark
+.DEFAULT: all
 
 CC=gcc
 CFLAGS=-Og -ggdb -pipe
