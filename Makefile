@@ -1,7 +1,7 @@
 .POSIX:
 .PHONY: all clean test benchmark
 
-CC?=gcc
+CC=gcc
 CFLAGS=-Og -ggdb -pipe
 SANITIZE?=-fsanitize=address,leak
 
