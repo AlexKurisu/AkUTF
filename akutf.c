@@ -31,7 +31,7 @@ typedef struct u8_decoder_ctx {
     const char *saveptr;
 } *u8_decoder_ctx;
 
-u8_decoder_ctx u8_decode_ctx(void) {
+static u8_decoder_ctx u8_decode_ctx(void) {
     u8_decoder_ctx ctx = calloc(1, sizeof(*ctx));
     if (!ctx)
         return NULL;
@@ -43,7 +43,7 @@ u8_decoder_ctx u8_decode_ctx(void) {
     return ctx;
 }
 
-uint32_t u8_decode_once(u8_decoder_ctx ctx, const char *src) {
+static uint32_t u8_decode_once(u8_decoder_ctx ctx, const char *src) {
     if (!ctx->saveptr)
         ctx->saveptr = src;
     uint8_t byte = *ctx->saveptr;
@@ -157,12 +157,53 @@ uint32_t *u8_decode(const char *src, _Bool replace) {
     }
 }
 
-char *u8_encode(const uint32_t *src) {
-    if (!src)
-        return NULL;
+/* Encodes a single codepoint into a buffer. Returns number of bytes written, or -1 on error */
+static int u8_encode_codepoint(uint32_t cp, char *dest) {
+    /* ASCII range: 0x00-0x7F */
+    if (cp <= 0x7F) {
+        dest[0] = (char)cp;
+        return 1;
+    }
+    /* 2-byte sequence: 0x80-0x7FF */
+    else if (cp <= 0x7FF) {
+        dest[0] = (char)(0xC0 | (cp >> 6));
+        dest[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    }
+    /* 3-byte sequence: 0x800-0xFFFF */
+    else if (cp <= 0xFFFF) {
+        /* Check for surrogate pairs (invalid in UTF-8) */
+        if (cp >= 0xD800 && cp <= 0xDFFF) {
+            errno = EILSEQ;
+            return -1;
+        }
+        dest[0] = (char)(0xE0 | (cp >> 12));
+        dest[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        dest[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    }
+    /* 4-byte sequence: 0x10000-0x10FFFF */
+    else if (cp <= 0x10FFFF) {
+        dest[0] = (char)(0xF0 | (cp >> 18));
+        dest[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        dest[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        dest[3] = (char)(0x80 | (cp & 0x3F));
+        return 4;
+    }
+    /* Invalid codepoint */
+    else {
+        errno = EILSEQ;
+        return -1;
+    }
+}
 
-    /* Calculate maximum possible length (each codepoint can be up to 4 bytes)
-     */
+char *u8_encode(const uint32_t *src) {
+    if (!src) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    /* Calculate maximum possible length (each codepoint can be up to 4 bytes) */
     size_t src_len = 0;
     while (src[src_len] != 0)
         src_len++;
@@ -177,42 +218,14 @@ char *u8_encode(const uint32_t *src) {
 
     while (src[i] != 0) {
         uint32_t cp = src[i];
-
-        /* ASCII range: 0x00-0x7F */
-        if (cp <= 0x7F) {
-            *dest_ptr++ = (char)cp;
-        }
-        /* 2-byte sequence: 0x80-0x7FF */
-        else if (cp <= 0x7FF) {
-            *dest_ptr++ = (char)(0xC0 | (cp >> 6));
-            *dest_ptr++ = (char)(0x80 | (cp & 0x3F));
-        }
-        /* 3-byte sequence: 0x800-0xFFFF */
-        else if (cp <= 0xFFFF) {
-            /* Check for surrogate pairs (invalid in UTF-8) */
-            if (cp >= 0xD800 && cp <= 0xDFFF) {
-                free(dest);
-                errno = EILSEQ;
-                return NULL;
-            }
-            *dest_ptr++ = (char)(0xE0 | (cp >> 12));
-            *dest_ptr++ = (char)(0x80 | ((cp >> 6) & 0x3F));
-            *dest_ptr++ = (char)(0x80 | (cp & 0x3F));
-        }
-        /* 4-byte sequence: 0x10000-0x10FFFF */
-        else if (cp <= 0x10FFFF) {
-            *dest_ptr++ = (char)(0xF0 | (cp >> 18));
-            *dest_ptr++ = (char)(0x80 | ((cp >> 12) & 0x3F));
-            *dest_ptr++ = (char)(0x80 | ((cp >> 6) & 0x3F));
-            *dest_ptr++ = (char)(0x80 | (cp & 0x3F));
-        }
-        /* Invalid codepoint */
-        else {
+        int bytes_written = u8_encode_codepoint(cp, dest_ptr);
+        
+        if (bytes_written < 0) {
             free(dest);
-            errno = EILSEQ;
             return NULL;
         }
-
+        
+        dest_ptr += bytes_written;
         i++;
     }
 
