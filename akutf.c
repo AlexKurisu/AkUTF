@@ -151,3 +151,65 @@ uint32_t *u8_decode(const char *src, _Bool replace) {
             dest++;
     }
 }
+
+char *u8_encode(const uint32_t *src) {
+    if (!src)
+        return NULL;
+
+    /* Calculate maximum possible length (each codepoint can be up to 4 bytes) */
+    size_t src_len = 0;
+    while (src[src_len] != 0)
+        src_len++;
+
+    size_t dest_max_len = src_len * 4 + 1;
+    char *dest = calloc(dest_max_len, sizeof(*dest));
+    if (!dest)
+        return NULL;
+
+    char *dest_ptr = dest;
+    size_t i = 0;
+
+    while (src[i] != 0) {
+        uint32_t cp = src[i];
+
+        /* ASCII range: 0x00-0x7F */
+        if (cp <= 0x7F) {
+            *dest_ptr++ = (char)cp;
+        }
+        /* 2-byte sequence: 0x80-0x7FF */
+        else if (cp <= 0x7FF) {
+            *dest_ptr++ = (char)(0xC0 | (cp >> 6));
+            *dest_ptr++ = (char)(0x80 | (cp & 0x3F));
+        }
+        /* 3-byte sequence: 0x800-0xFFFF */
+        else if (cp <= 0xFFFF) {
+            /* Check for surrogate pairs (invalid in UTF-8) */
+            if (cp >= 0xD800 && cp <= 0xDFFF) {
+                free(dest);
+                errno = EILSEQ;
+                return NULL;
+            }
+            *dest_ptr++ = (char)(0xE0 | (cp >> 12));
+            *dest_ptr++ = (char)(0x80 | ((cp >> 6) & 0x3F));
+            *dest_ptr++ = (char)(0x80 | (cp & 0x3F));
+        }
+        /* 4-byte sequence: 0x10000-0x10FFFF */
+        else if (cp <= 0x10FFFF) {
+            *dest_ptr++ = (char)(0xF0 | (cp >> 18));
+            *dest_ptr++ = (char)(0x80 | ((cp >> 12) & 0x3F));
+            *dest_ptr++ = (char)(0x80 | ((cp >> 6) & 0x3F));
+            *dest_ptr++ = (char)(0x80 | (cp & 0x3F));
+        }
+        /* Invalid codepoint */
+        else {
+            free(dest);
+            errno = EILSEQ;
+            return NULL;
+        }
+
+        i++;
+    }
+
+    *dest_ptr = '\0';
+    return dest;
+}
