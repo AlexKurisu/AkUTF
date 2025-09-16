@@ -10,11 +10,16 @@ ALL_WARN=-Wall -Wextra -Wshadow -Wpedantic -Wno-pointer-sign -Wstrict-prototypes
 ALL_DEF=-D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700
 ALL_CFLAGS=$(CFLAGS) $(ALL_DEF) -std=c99 -fno-strict-aliasing -pedantic-errors $(ALL_WARN)
 LDLIBS=
-COMMON_OBJ=akutf.o
-CLI_OBJ=$(COMMON_OBJ) cli.o
-TEST_OBJ=$(COMMON_OBJ) test.o
+COMMON_OBJ=src/akutf.o src/utf8_string.o src/utf8_iterator.o src/utf8_utils.o
+CLI_OBJ=$(COMMON_OBJ) src/cli.o
+TEST_OBJ=$(COMMON_OBJ) test/test.o
 HDR=\
-	akutf.h
+	src/akutf.h \
+	src/utf8_constants.h \
+	src/utf8_decode.h \
+	src/utf8_string.h \
+	src/utf8_iterator.h \
+	src/utf8_utils.h
 
 all: cli
 
@@ -33,7 +38,7 @@ cli: $(CLI_OBJ)
 tests: $(TEST_OBJ)
 	$(CC) $(LDFLAGS) $(SANITIZE) -o $@ $(TEST_OBJ) $(LDLIBS)
 
-$(COMMON_OBJ) cli.o test.o: $(HDR)
+$(COMMON_OBJ) cli.o test/test.o: $(HDR)
 
 clean:
-	rm -f cli tests $(COMMON_OBJ) cli.o test.o
+	rm -f cli tests $(COMMON_OBJ) src/cli.o test/test.o

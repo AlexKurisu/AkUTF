@@ -1,4 +1,5 @@
 #include "akutf.h"
+#include "utf8_constants.h"
 
 #include <errno.h>
 #include <stddef.h>
@@ -36,8 +37,8 @@ static u8_decoder_ctx u8_decode_ctx(void) {
     if (!ctx)
         return NULL;
 
-    ctx->lower = 0x80;
-    ctx->upper = 0xBF;
+    ctx->lower = UTF8_CONT_BYTE_MIN;
+    ctx->upper = UTF8_CONT_BYTE_MAX;
     ctx->saveptr = NULL;
 
     return ctx;
@@ -47,41 +48,41 @@ static uint32_t u8_decode_once(u8_decoder_ctx ctx, const char *src) {
     if (!ctx->saveptr)
         ctx->saveptr = src;
     uint8_t byte = *ctx->saveptr;
-    if (byte != 0x0)
+    if (byte != UTF8_NULL_BYTE)
         ctx->saveptr++;
 
-    if (byte == 0x0 && ctx->need > 0) {
+    if (byte == UTF8_NULL_BYTE && ctx->need > 0) {
         ctx->need = 0;
         ctx->state = U8_DECODE_ERROR;
         return 0;
-    } else if (byte == 0x0) {
+    } else if (byte == UTF8_NULL_BYTE) {
         ctx->state = U8_DECODE_FINISH;
         return 0;
     }
 
     if (ctx->need == 0) {
-        if (byte > 0x0 && byte <= 0x7F) {
+        if (byte > UTF8_NULL_BYTE && byte <= UTF8_ASCII_MAX) {
             ctx->state = U8_DECODE_OK;
             return byte;
-        } else if (byte >= 0xC2 && byte <= 0xDF) {
+        } else if (byte >= UTF8_2BYTE_MIN && byte <= UTF8_2BYTE_MAX) {
             ctx->need = 1;
-            ctx->codepoint = byte & 0x1F;
-        } else if (byte >= 0xE0 && byte <= 0xEF) {
-            if (byte == 0xE0)
-                ctx->lower = 0xA0;
-            else if (byte == 0xED)
-                ctx->upper = 0x9F;
+            ctx->codepoint = byte & UTF8_2BYTE_VALUE_MASK;
+        } else if (byte >= UTF8_3BYTE_MIN && byte <= UTF8_3BYTE_MAX) {
+            if (byte == UTF8_3BYTE_MIN)
+                ctx->lower = UTF8_E0_CONT_MIN;
+            else if (byte == UTF8_3BYTE_SURROGATE)
+                ctx->upper = UTF8_ED_CONT_MAX;
 
             ctx->need = 2;
-            ctx->codepoint = byte & 0xF;
-        } else if (byte >= 0xF0 && byte <= 0xF4) {
-            if (byte == 0xF0)
-                ctx->lower = 0x90;
-            else if (byte == 0xF4)
-                ctx->upper = 0x8F;
+            ctx->codepoint = byte & UTF8_3BYTE_VALUE_MASK;
+        } else if (byte >= UTF8_4BYTE_MIN && byte <= UTF8_4BYTE_MAX) {
+            if (byte == UTF8_4BYTE_MIN)
+                ctx->lower = UTF8_F0_CONT_MIN;
+            else if (byte == UTF8_4BYTE_MAX)
+                ctx->upper = UTF8_F4_CONT_MAX;
 
             ctx->need = 3;
-            ctx->codepoint = byte & 0x7;
+            ctx->codepoint = byte & UTF8_4BYTE_VALUE_MASK;
         } else {
             ctx->state = U8_DECODE_ERROR;
             return 0;
@@ -93,17 +94,17 @@ static uint32_t u8_decode_once(u8_decoder_ctx ctx, const char *src) {
 
     if (byte < ctx->lower || byte > ctx->upper) {
         ctx->codepoint = ctx->need = ctx->seen = 0;
-        ctx->lower = 0x80;
-        ctx->upper = 0xBF;
+        ctx->lower = UTF8_CONT_BYTE_MIN;
+        ctx->upper = UTF8_CONT_BYTE_MAX;
 
         ctx->saveptr--;
         ctx->state = U8_DECODE_ERROR;
         return 0;
     }
 
-    ctx->lower = 0x80;
-    ctx->upper = 0xBF;
-    ctx->codepoint = (ctx->codepoint << 6) | (byte & 0x3F);
+    ctx->lower = UTF8_CONT_BYTE_MIN;
+    ctx->upper = UTF8_CONT_BYTE_MAX;
+    ctx->codepoint = (ctx->codepoint << 6) | (byte & UTF8_CONTINUATION_VALUE_MASK);
     ctx->seen++;
 
     if (ctx->seen != ctx->need) {
@@ -118,7 +119,7 @@ static uint32_t u8_decode_once(u8_decoder_ctx ctx, const char *src) {
     return cp;
 }
 
-uint32_t *u8_decode(const char *src, _Bool replace) {
+uint32_t *u8dec(const char *src, _Bool replace) {
     if (!src) {
         errno = EINVAL;
         return NULL;
@@ -131,19 +132,19 @@ uint32_t *u8_decode(const char *src, _Bool replace) {
 
     uint32_t *start = dest;
     u8_decoder_ctx dctx = u8_decode_ctx();
-    uint32_t rcp = 0x0;
+    uint32_t rcp = UTF8_NULL_CODEPOINT;
     while (1) {
         rcp = u8_decode_once(dctx, src);
 
         if (dctx->state == U8_DECODE_FINISH) {
-            *dest = 0x0;
+            *dest = UTF8_NULL_CODEPOINT;
             free(dctx);
             return start;
         } else if (rcp > 0) {
             *dest = rcp;
         } else if (dctx->state == U8_DECODE_ERROR) {
             if (replace) {
-                *dest = 0xFFFD;
+                *dest = UTF8_REPLACEMENT_CHARACTER;
             } else {
                 free(start);
                 free(dctx);
@@ -157,53 +158,45 @@ uint32_t *u8_decode(const char *src, _Bool replace) {
     }
 }
 
-/* Encodes a single codepoint into a buffer. Returns number of bytes written, or -1 on error */
 static int u8_encode_codepoint(uint32_t cp, char *dest) {
-    /* ASCII range: 0x00-0x7F */
-    if (cp <= 0x7F) {
+    if (cp <= UTF8_CODEPOINT_1BYTE_MAX) {
         dest[0] = (char)cp;
         return 1;
     }
-    /* 2-byte sequence: 0x80-0x7FF */
-    else if (cp <= 0x7FF) {
-        dest[0] = (char)(0xC0 | (cp >> 6));
-        dest[1] = (char)(0x80 | (cp & 0x3F));
+    else if (cp <= UTF8_CODEPOINT_2BYTE_MAX) {
+        dest[0] = (char)(UTF8_2BYTE_PATTERN | (cp >> 6));
+        dest[1] = (char)(UTF8_CONTINUATION_PATTERN | (cp & UTF8_CONTINUATION_VALUE_MASK));
         return 2;
     }
-    /* 3-byte sequence: 0x800-0xFFFF */
-    else if (cp <= 0xFFFF) {
-        /* Check for surrogate pairs (invalid in UTF-8) */
-        if (cp >= 0xD800 && cp <= 0xDFFF) {
+    else if (cp <= UTF8_CODEPOINT_3BYTE_MAX) {
+        if (cp >= UTF8_SURROGATE_MIN && cp <= UTF8_SURROGATE_MAX) {
             errno = EILSEQ;
             return -1;
         }
-        dest[0] = (char)(0xE0 | (cp >> 12));
-        dest[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
-        dest[2] = (char)(0x80 | (cp & 0x3F));
+        dest[0] = (char)(UTF8_3BYTE_PATTERN | (cp >> 12));
+        dest[1] = (char)(UTF8_CONTINUATION_PATTERN | ((cp >> 6) & UTF8_CONTINUATION_VALUE_MASK));
+        dest[2] = (char)(UTF8_CONTINUATION_PATTERN | (cp & UTF8_CONTINUATION_VALUE_MASK));
         return 3;
     }
-    /* 4-byte sequence: 0x10000-0x10FFFF */
-    else if (cp <= 0x10FFFF) {
-        dest[0] = (char)(0xF0 | (cp >> 18));
-        dest[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
-        dest[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
-        dest[3] = (char)(0x80 | (cp & 0x3F));
+    else if (cp <= UTF8_CODEPOINT_4BYTE_MAX) {
+        dest[0] = (char)(UTF8_4BYTE_PATTERN | (cp >> 18));
+        dest[1] = (char)(UTF8_CONTINUATION_PATTERN | ((cp >> 12) & UTF8_CONTINUATION_VALUE_MASK));
+        dest[2] = (char)(UTF8_CONTINUATION_PATTERN | ((cp >> 6) & UTF8_CONTINUATION_VALUE_MASK));
+        dest[3] = (char)(UTF8_CONTINUATION_PATTERN | (cp & UTF8_CONTINUATION_VALUE_MASK));
         return 4;
     }
-    /* Invalid codepoint */
     else {
         errno = EILSEQ;
         return -1;
     }
 }
 
-char *u8_encode(const uint32_t *src) {
+char *u8enc(const uint32_t *src) {
     if (!src) {
         errno = EINVAL;
         return NULL;
     }
 
-    /* Calculate maximum possible length (each codepoint can be up to 4 bytes) */
     size_t src_len = 0;
     while (src[src_len] != 0)
         src_len++;

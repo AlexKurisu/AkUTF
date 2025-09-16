@@ -2,6 +2,9 @@
 .vscode/
 .cache/
 compile_commands.json
-*.o
+**/*.o
 cli
 tests
+debug_*
+*.dSYM/
+test/test

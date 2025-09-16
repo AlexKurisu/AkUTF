@@ -7,8 +7,8 @@
 extern "C" {
 #endif
 
-char *u8_encode(const uint32_t *src);
-uint32_t *u8_decode(const char *src, _Bool replace);
+char *u8enc(const uint32_t *src);
+uint32_t *u8dec(const char *src, _Bool replace);
 
 #ifdef __cplusplus
 };
